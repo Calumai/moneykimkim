@@ -1,30 +1,32 @@
 /**
  * 政府採購每日查標整理 MVP - Google Apps Script 寫入端
+ *
+ * 第一次設定：
+ * 專案設定 > 指令碼屬性
+ * SCRIPT_TOKEN = 1234
+ * SHEET_ID = 你的 Google Sheet ID
  */
 
 function doGet() {
-  return jsonResponse({ ok: true, message: 'procurement sheet api is alive' });
+  return jsonResponse({ ok: true, message: 'API 可以使用' });
 }
 
 function doPost(e) {
   try {
     const payload = JSON.parse(e.postData.contents || '{}');
-    const expectedToken = PropertiesService.getScriptProperties().getProperty('SCRIPT_TOKEN');
+    const props = PropertiesService.getScriptProperties();
+    const expectedToken = props.getProperty('SCRIPT_TOKEN') || '1234';
 
-    if (!expectedToken) {
-      return jsonResponse({ ok: false, error: 'SCRIPT_TOKEN is not configured' });
+    if (String(payload.token || '') !== expectedToken) {
+      return jsonResponse({ ok: false, error: 'Token 不正確' });
     }
 
-    if (payload.token !== expectedToken) {
-      return jsonResponse({ ok: false, error: 'Unauthorized token' });
-    }
-
-    const sheetId = String(payload.sheetId || '').trim();
+    const sheetId = String(payload.sheetId || props.getProperty('SHEET_ID') || '').trim();
     const sheetName = String(payload.sheetName || todaySheetName()).trim();
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
 
-    if (!sheetId) return jsonResponse({ ok: false, error: 'Missing sheetId' });
-    if (!rows.length) return jsonResponse({ ok: false, error: 'No rows to write' });
+    if (!sheetId) return jsonResponse({ ok: false, error: '請在 Apps Script 指令碼屬性設定 SHEET_ID' });
+    if (!rows.length) return jsonResponse({ ok: false, error: '沒有資料可寫入' });
 
     const spreadsheet = SpreadsheetApp.openById(sheetId);
     const sheet = getOrCreateSheet(spreadsheet, sheetName);
@@ -49,14 +51,7 @@ function doPost(e) {
       sheet.getRange(sheet.getLastRow() + 1, 1, valuesToAppend.length, HEADERS.length).setValues(valuesToAppend);
     }
 
-    return jsonResponse({
-      ok: true,
-      sheetName: sheetName,
-      received: rows.length,
-      inserted: valuesToAppend.length,
-      skipped: skipped.length,
-      skippedItems: skipped
-    });
+    return jsonResponse({ ok: true, sheetName: sheetName, received: rows.length, inserted: valuesToAppend.length, skipped: skipped.length, skippedItems: skipped });
   } catch (error) {
     return jsonResponse({ ok: false, error: String(error && error.message ? error.message : error) });
   }
