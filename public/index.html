@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>政府採購每日查標整理 MVP</title>
+  <style>
+    body{margin:0;background:#f5f7fb;color:#172033;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Noto Sans TC',sans-serif}header{background:#172033;color:white;padding:24px}main{max-width:1120px;margin:0 auto;padding:24px}section{background:white;border:1px solid #dfe5ef;border-radius:16px;padding:20px;margin-bottom:18px;box-shadow:0 8px 28px rgba(23,32,51,.06)}label{display:block;font-weight:700;margin:12px 0 6px}input,textarea{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:10px 12px;font:inherit}textarea{min-height:220px;resize:vertical}button{border:0;border-radius:999px;padding:10px 16px;font-weight:800;cursor:pointer;margin:8px 8px 0 0;background:#2457c5;color:white;font:inherit}.secondary{background:#475569}.danger{background:#a83d3d}.muted{color:#64748b;font-size:14px}.hidden{display:none!important}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.notice{background:#fff7ed;border:1px solid #fed7aa;color:#7c2d12;padding:12px;border-radius:12px}table{width:100%;border-collapse:collapse;font-size:14px}th,td{border-bottom:1px solid #e2e8f0;padding:10px;text-align:left;vertical-align:top}th{background:#f8fafc}.tag{display:inline-block;padding:3px 8px;border-radius:999px;background:#e2e8f0;margin:2px}.priority{font-weight:900}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;border-radius:12px;padding:14px;overflow:auto}@media(max-width:760px){.grid{grid-template-columns:1fr}main{padding:14px}table{font-size:12px}}
+  </style>
+</head>
+<body>
+<header><h1>政府採購每日查標整理 MVP</h1><p>公司內部工具｜入口密碼 1234｜不自動傳群組</p></header>
+<main>
+<section id="loginBox"><h2>入口密碼</h2><p class="muted">這只是內部小工具的前端入口，不是正式資安防護。</p><input id="passwordInput" type="password" placeholder="請輸入密碼" /><button onclick="login()">進入</button><p id="loginMsg" class="muted"></p></section>
+<div id="app" class="hidden">
+<section><h2>設定</h2><div class="notice">Google private key 不放前端。請使用 Google Apps Script Web App URL 與 API Token 寫入 Google Sheet。</div><div class="grid"><div><label>Apps Script Web App URL</label><input id="apiUrl" placeholder="https://script.google.com/macros/s/.../exec" /></div><div><label>API Token</label><input id="apiToken" placeholder="請填 Apps Script 的 SCRIPT_TOKEN" /></div><div><label>Google Sheet ID</label><input id="sheetId" placeholder="試算表網址 /d/ 後面的 ID" /></div><div><label>分頁名稱</label><input id="sheetName" placeholder="例如 2026-06-17；空白時 Apps Script 會用今天日期" /></div></div><button onclick="saveSettings()">儲存設定</button><button class="secondary" onclick="testConnection()">測試連線</button><button class="danger" onclick="logout()">登出</button><p id="settingsMsg" class="muted"></p></section>
+<section><h2>貼上標案資料</h2><p class="muted">支援表格格式或「欄位：內容」格式。這一版是半自動輸入，不會登入政府採購網。</p><textarea id="rawInput" placeholder="標案名稱&#9;機關名稱&#9;公告日期&#9;截標日期&#9;預算金額&#9;標案連結&#9;摘要"></textarea><button onclick="parseInput()">解析標案</button><button class="secondary" onclick="loadExample()">載入範例</button><button class="secondary" onclick="copyReport()">複製群組回報文字</button><button onclick="writeToSheet()">寫入 Google Sheet</button><p id="parseMsg" class="muted"></p></section>
+<section><h2>每日標案清單</h2><div id="summary" class="muted">尚未解析資料。</div><div style="overflow:auto;max-height:520px"><table><thead><tr><th>優先度</th><th>標案名稱</th><th>機關</th><th>公告</th><th>截標</th><th>金額</th><th>命中關鍵字</th><th>備註</th><th>連結</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+<section><h2>群組回報文字</h2><pre id="report">尚未產生。</pre></section>
+</div>
+</main>
+<script>
+const APP_PASSWORD='1234';
+const agencyKeywords=['原住民','原住民族','客家','客家委員會','原住民族委員會','原住民族語言研究發展基金會'];
+const tenderKeywords=['族語','客語','客話','拍攝','攝影','澎湖','馬祖','福州話','閩南','閩東','閩語','台語','臺語','鄉土','傳統','部落','繪本','系統','AI','網站','本土','影片','節目','動畫','教材','數位','印','語言','語料','資訊','資料','建置','文化','平台','平臺','母語','音樂','歌曲','歌謠','聲音','採集','有聲書','電子書'];
+const tribeKeywords=['阿美','泰雅','賽夏','邵族','賽德克','布農','排灣','魯凱','太魯閣','噶瑪蘭','鄒族','卑南','雅美','達悟','撒奇萊雅','卡那卡那富','拉阿魯哇','西拉雅','新港文','拜壺','阿立祖','夜祭','牽曲','平埔'];
+let tenders=[];
+function login(){const v=document.getElementById('passwordInput').value;if(v===APP_PASSWORD){localStorage.setItem('procurement-login','yes');showApp()}else document.getElementById('loginMsg').textContent='密碼錯誤'}
+function logout(){localStorage.removeItem('procurement-login');location.reload()}
+function showApp(){document.getElementById('loginBox').classList.add('hidden');document.getElementById('app').classList.remove('hidden');loadSettings()}
+if(localStorage.getItem('procurement-login')==='yes')showApp();
+function saveSettings(){['apiUrl','apiToken','sheetId','sheetName'].forEach(id=>localStorage.setItem('procurement-'+id,document.getElementById(id).value.trim()));document.getElementById('settingsMsg').textContent='已儲存設定在本機瀏覽器。'}
+function loadSettings(){['apiUrl','apiToken','sheetId','sheetName'].forEach(id=>document.getElementById(id).value=localStorage.getItem('procurement-'+id)||'')}
+async function testConnection(){const url=val('apiUrl');if(!url)return alert('請先填 Apps Script Web App URL');try{const res=await fetch(url);const data=await res.json();document.getElementById('settingsMsg').textContent=data.ok?'連線成功':'連線失敗：'+JSON.stringify(data)}catch(e){document.getElementById('settingsMsg').textContent='連線失敗：'+e.message}}
+function loadExample(){document.getElementById('rawInput').value='標案名稱\t機關名稱\t公告日期\t截標日期\t預算金額\t標案連結\t摘要\n族語教材數位平台建置案\t原住民族委員會\t2026-06-17\t2026-06-30\t2500000\thttps://example.com/tender-1\t測試資料，非實際政府採購網標案\n網站維護與系統維運案\t客家委員會\t2026-06-17\t2026-06-28\t800000\thttps://example.com/tender-2\t測試資料，非實際政府採購網標案'}
+function parseInput(){const raw=document.getElementById('rawInput').value.trim();if(!raw)return alert('請先貼上標案資料');tenders=(raw.includes('\t')?parseTable(raw):parseFieldBlocks(raw)).map((t,i)=>classify({...t,id:t.id||String(i+1).padStart(3,'0')}));render()}
+function parseTable(raw){const lines=raw.split(/\n+/).filter(Boolean);const start=lines[0].includes('標案名稱')?1:0;return lines.slice(start).map(line=>{const c=line.split('\t');return{title:c[0]||'',agency:c[1]||'',publishDate:c[2]||'',deadline:c[3]||'',budget:c[4]||'',link:c[5]||'',summary:c.slice(6).join(' ')||''}}).filter(t=>t.title||t.agency)}
+function parseFieldBlocks(raw){return raw.split(/\n\s*\n/).map(block=>{const t={};block.split(/\n/).forEach(line=>{const m=line.match(/^([^：:]+)[：:](.*)$/);if(!m)return;const k=m[1].trim(),v=m[2].trim();if(k.includes('標案名稱'))t.title=v;else if(k.includes('機關'))t.agency=v;else if(k.includes('公告'))t.publishDate=v;else if(k.includes('截標'))t.deadline=v;else if(k.includes('預算')||k.includes('金額'))t.budget=v;else if(k.includes('連結'))t.link=v;else if(k.includes('摘要'))t.summary=v});return t}).filter(t=>t.title||t.agency)}
+function classify(t){const text=[t.title,t.agency,t.summary].join(' ');const matched=[...agencyKeywords,...tenderKeywords,...tribeKeywords].filter(k=>text.includes(k));const notes=[];let priority=matched.length?'可觀察':'需人工確認';const budgetNumber=Number(String(t.budget).replace(/[^0-9]/g,''));if(/維運|維護/.test(text)){notes.push('維運／維護類，可能已有原廠商');priority='低優先'}if(/系統|資訊|網站|平台|平臺/.test(text)&&budgetNumber&&budgetNumber<1000000){notes.push('資訊系統類且低於 100 萬，先低優先');priority='低優先'}if(/原廠授權|授權書/.test(text)){notes.push('可能需要原廠授權書，需人工確認');priority='低優先'}if(!notes.length&&matched.length)notes.push('命中關鍵字，建議人工檢視');return{...t,dataStatus:'人工匯入資料',matchedKeywords:matched,notes,priority}}
+function render(){document.getElementById('summary').textContent=`共 ${tenders.length} 筆；建議人工確認後再寫入。`;document.getElementById('rows').innerHTML=tenders.map(t=>`<tr><td class="priority">${esc(t.priority)}</td><td>${esc(t.title)}</td><td>${esc(t.agency)}</td><td>${esc(t.publishDate)}</td><td>${esc(t.deadline)}</td><td>${esc(t.budget)}</td><td>${t.matchedKeywords.map(k=>`<span class="tag">${esc(k)}</span>`).join('')}</td><td>${esc(t.notes.join('；'))}</td><td>${t.link?`<a href="${esc(t.link)}" target="_blank">連結</a>`:''}</td></tr>`).join('');document.getElementById('report').textContent=buildReport();document.getElementById('parseMsg').textContent='解析完成。'}
+function buildReport(){if(!tenders.length)return'尚未產生。';return['今日查標整理如下：',...tenders.map((t,i)=>`${i+1}. [${t.priority}] ${t.title}｜${t.agency}｜截標：${t.deadline||'未填'}｜${t.link||''}`)].join('\n')}
+function copyReport(){navigator.clipboard.writeText(document.getElementById('report').textContent);alert('已複製回報文字')}
+async function writeToSheet(){if(!tenders.length)return alert('請先解析標案');saveSettings();const payload={token:val('apiToken'),sheetId:val('sheetId'),sheetName:val('sheetName'),rows:tenders};if(!val('apiUrl')||!payload.token||!payload.sheetId)return alert('請先填 URL、Token、Sheet ID');try{const res=await fetch(val('apiUrl'),{method:'POST',body:JSON.stringify(payload)});const data=await res.json();alert(data.ok?`寫入完成：新增 ${data.inserted} 筆，略過 ${data.skipped} 筆`:'寫入失敗：'+JSON.stringify(data))}catch(e){alert('寫入失敗：'+e.message)}}
+function val(id){return document.getElementById(id).value.trim()}function esc(s){return String(s||'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}
+</script>
+</body>
+</html>
