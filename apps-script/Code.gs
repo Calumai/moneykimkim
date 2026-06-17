@@ -9,6 +9,7 @@ function doPost(e) {
     var expected = props.getProperty('SCRIPT_TOKEN') || '1234';
     if (String(payload.token || '') !== expected) return jsonResponse({ ok: false, error: '驗證失敗' });
     if (payload.action === 'search') return jsonResponse(searchTenders(payload.query || {}));
+    if (payload.action === 'debug') return jsonResponse(debugSearch(payload.query || {}));
     return jsonResponse(writeRows(payload.rows || [], payload.sheetName || ''));
   } catch (error) {
     return jsonResponse({ ok: false, error: String(error && error.message ? error.message : error) });
@@ -16,19 +17,20 @@ function doPost(e) {
 }
 
 function searchTenders(query) {
+  query = query || {};
   var agencies = splitWords(query.agencyQuery || '原住民、客家');
   var keywords = splitWords(query.keywordQuery || '族語、網站、教材');
   var urls = buildPccUrls(query, agencies, keywords);
   var found = [];
-  var errors = [];
+  var debugItems = [];
 
-  urls.forEach(function (url) {
-    try {
-      var html = fetchText(url);
-      var parsed = parsePccHtml(html, url);
+  urls.forEach(function (url, index) {
+    if (index >= 8) return;
+    var result = fetchTextWithDebug(url);
+    debugItems.push(result.debug);
+    if (result.ok) {
+      var parsed = parsePccHtml(result.text, url);
       parsed.forEach(function (row) { found.push(row); });
-    } catch (err) {
-      errors.push(String(err && err.message ? err.message : err));
     }
   });
 
@@ -40,10 +42,31 @@ function searchTenders(query) {
 
   return {
     ok: true,
-    message: unique.length ? ('搜尋完成，共找到 ' + unique.length + ' 筆。截標日期以政府採購網頁面文字為準。') : ('沒有解析到標案。可改日期/關鍵字再查，或切換人工貼上備援。' + (errors.length ? ' 錯誤：' + errors.slice(0, 2).join('；') : '')),
+    message: buildSearchMessage(unique, debugItems),
     rows: unique,
-    checkedUrls: urls.length
+    checkedUrls: urls.length,
+    debug: debugItems.slice(0, 3)
   };
+}
+
+function buildSearchMessage(rows, debugItems) {
+  if (rows.length) return '搜尋完成，共找到 ' + rows.length + ' 筆。截標日期以政府採購網頁面文字為準。';
+  var first = debugItems[0] || {};
+  var flags = [];
+  if (first.hasTable) flags.push('有 table'); else flags.push('沒有 table');
+  if (first.hasTenderText) flags.push('有標案文字'); else flags.push('沒有標案文字');
+  if (first.hasDeadlineText) flags.push('有截標文字'); else flags.push('沒有截標文字');
+  return '查詢已送出，但沒有解析到標案。這通常代表查詢網址或 HTML 解析規則還要調整。' +
+    ' HTTP=' + (first.httpCode || '未知') + '，' + flags.join('，') +
+    '。第一個查詢網址：' + (first.url || '') +
+    '。頁面前段：' + (first.preview || '').slice(0, 300);
+}
+
+function debugSearch(query) {
+  query = query || {};
+  var urls = buildPccUrls(query, splitWords(query.agencyQuery || '花蓮'), splitWords(query.keywordQuery || ''));
+  var result = fetchTextWithDebug(urls[0]);
+  return { ok: true, debug: result.debug };
 }
 
 function buildPccUrls(query, agencies, keywords) {
@@ -53,10 +76,9 @@ function buildPccUrls(query, agencies, keywords) {
   var aList = agencies.length ? agencies : [''];
   var kList = keywords.length ? keywords : [''];
   aList.slice(0, 4).forEach(function (agency) {
-    kList.slice(0, 12).forEach(function (keyword) {
-      pairs.push({ agency: agency, keyword: keyword });
-    });
+    kList.slice(0, 12).forEach(function (keyword) { pairs.push({ agency: agency, keyword: keyword }); });
   });
+  if (!pairs.length) pairs.push({ agency: '', keyword: '' });
 
   return pairs.map(function (p) {
     var base = 'https://web.pcc.gov.tw/tps/pss/tender.do';
@@ -78,17 +100,31 @@ function buildPccUrls(query, agencies, keywords) {
   });
 }
 
-function fetchText(url) {
-  var res = UrlFetchApp.fetch(url, {
-    method: 'get',
-    muteHttpExceptions: true,
-    followRedirects: true,
-    headers: { 'User-Agent': 'Mozilla/5.0 AppsScript tender helper' }
-  });
-  var code = res.getResponseCode();
-  var text = res.getContentText('UTF-8');
-  if (code < 200 || code >= 400) throw new Error('政府採購網回應 HTTP ' + code);
-  return text;
+function fetchTextWithDebug(url) {
+  var debug = { url: url, httpCode: '', hasTable: false, hasTenderText: false, hasDeadlineText: false, preview: '', error: '' };
+  try {
+    var res = UrlFetchApp.fetch(url, {
+      method: 'get',
+      muteHttpExceptions: true,
+      followRedirects: true,
+      headers: { 'User-Agent': 'Mozilla/5.0 AppsScript tender helper' }
+    });
+    var code = res.getResponseCode();
+    var text = res.getContentText('UTF-8');
+    debug.httpCode = code;
+    debug.hasTable = /<table/i.test(text);
+    debug.hasTenderText = /標案|招標|決標|採購/.test(text);
+    debug.hasDeadlineText = /截標|截止投標|投標截止/.test(text);
+    debug.preview = cleanHtml(text).slice(0, 600);
+    if (code < 200 || code >= 400) {
+      debug.error = 'HTTP ' + code;
+      return { ok: false, text: text, debug: debug };
+    }
+    return { ok: true, text: text, debug: debug };
+  } catch (err) {
+    debug.error = String(err && err.message ? err.message : err);
+    return { ok: false, text: '', debug: debug };
+  }
 }
 
 function parsePccHtml(html, sourceUrl) {
@@ -98,21 +134,13 @@ function parsePccHtml(html, sourceUrl) {
     var cells = extractCells(tr);
     var link = extractTenderLink(tr);
     var text = cells.join(' ');
-    if (!link && text.indexOf('標案') < 0) return;
+    if (!link && text.indexOf('標案') < 0 && text.indexOf('招標') < 0) return;
     if (cells.length < 4) return;
     var title = guessTitle(cells);
     var agency = guessAgency(cells);
-    if (!title || title.indexOf('標案名稱') >= 0) return;
+    if (!title || title.indexOf('標案名稱') >= 0 || title.indexOf('查詢') >= 0) return;
     var dates = guessDates(cells);
-    rows.push({
-      title: title,
-      agency: agency,
-      publishDate: dates.publishDate,
-      deadline: dates.deadline,
-      budget: guessBudget(cells),
-      link: link || sourceUrl,
-      summary: text.slice(0, 260)
-    });
+    rows.push({ title: title, agency: agency, publishDate: dates.publishDate, deadline: dates.deadline, budget: guessBudget(cells), link: link || sourceUrl, summary: text.slice(0, 260) });
   });
   return rows;
 }
@@ -123,7 +151,7 @@ function extractCells(tr) {
 }
 
 function extractTenderLink(tr) {
-  var m = tr.match(/href=["']([^"']*(?:tender|prkms|pkPmsMain)[^"']*)["']/i);
+  var m = tr.match(/href=["']([^"']*(?:tender|prkms|pkPmsMain|Tender)[^"']*)["']/i);
   if (!m) return '';
   var href = m[1].replace(/&amp;/g, '&');
   if (href.indexOf('http') === 0) return href;
@@ -132,65 +160,25 @@ function extractTenderLink(tr) {
 }
 
 function cleanHtml(s) {
-  return String(s || '')
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return String(s || '').replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
 }
 
 function guessTitle(cells) {
   var best = '';
-  cells.forEach(function (c) {
-    if (c.length > best.length && !looksLikeDate(c) && !looksLikeMoney(c) && c.indexOf('機關') < 0) best = c;
-  });
+  cells.forEach(function (c) { if (c.length > best.length && !looksLikeDate(c) && !looksLikeMoney(c) && c.indexOf('機關') < 0) best = c; });
   return best;
 }
-
-function guessAgency(cells) {
-  for (var i = 0; i < cells.length; i++) {
-    if (/(委員會|基金會|公所|學校|局|處|署|部|中心|政府)/.test(cells[i]) && cells[i].length < 60) return cells[i];
-  }
-  return cells[1] || '';
-}
-
-function guessDates(cells) {
-  var dates = [];
-  cells.forEach(function (c) {
-    var found = c.match(/(?:\d{2,3}|\d{4})[\/.-]\d{1,2}[\/.-]\d{1,2}(?:\s+\d{1,2}:\d{2})?/g);
-    if (found) found.forEach(function (d) { dates.push(d); });
-  });
-  return { publishDate: dates[0] || '', deadline: dates[1] || '' };
-}
-
-function guessBudget(cells) {
-  for (var i = 0; i < cells.length; i++) {
-    if (/\d{1,3}(,\d{3})+|\d{6,}/.test(cells[i]) && !looksLikeDate(cells[i])) return cells[i].match(/\d[\d,]*/)[0];
-  }
-  return '';
-}
-
+function guessAgency(cells) { for (var i = 0; i < cells.length; i++) { if (/(委員會|基金會|公所|學校|局|處|署|部|中心|政府|鄉|鎮|市)/.test(cells[i]) && cells[i].length < 80) return cells[i]; } return cells[1] || ''; }
+function guessDates(cells) { var dates = []; cells.forEach(function (c) { var found = c.match(/(?:\d{2,3}|\d{4})[\/.-]\d{1,2}[\/.-]\d{1,2}(?:\s+\d{1,2}:\d{2})?/g); if (found) found.forEach(function (d) { dates.push(d); }); }); return { publishDate: dates[0] || '', deadline: dates[1] || '' }; }
+function guessBudget(cells) { for (var i = 0; i < cells.length; i++) { if (/\d{1,3}(,\d{3})+|\d{6,}/.test(cells[i]) && !looksLikeDate(cells[i])) return cells[i].match(/\d[\d,]*/)[0]; } return ''; }
 function looksLikeDate(s) { return /(?:\d{2,3}|\d{4})[\/.-]\d{1,2}[\/.-]\d{1,2}/.test(String(s)); }
 function looksLikeMoney(s) { return /\d{1,3}(,\d{3})+|\d{6,}/.test(String(s)); }
-
-function uniqueRows(rows) {
-  var seen = {};
-  var out = [];
-  rows.forEach(function (r) {
-    var key = [r.link, r.title, r.agency].join('|');
-    if (!seen[key]) { seen[key] = true; out.push(r); }
-  });
-  return out;
-}
-
+function uniqueRows(rows) { var seen = {}; var out = []; rows.forEach(function (r) { var key = [r.link, r.title, r.agency].join('|'); if (!seen[key]) { seen[key] = true; out.push(r); } }); return out; }
 function splitWords(text) { return String(text || '').split(/[、,，\s]+/).map(function (s) { return s.trim(); }).filter(Boolean); }
 function toQuery(obj) { return Object.keys(obj).map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(obj[k] || ''); }).join('&'); }
 function toRocDate(iso) { var p = String(iso || '').split('-'); if (p.length < 3) return iso; return String(Number(p[0]) - 1911) + '/' + p[1] + '/' + p[2]; }
+
+function authorizeUrlFetch() { UrlFetchApp.fetch('https://web.pcc.gov.tw/tps/pss/tender.do?searchMode=common&searchType=basic&method=search'); }
 
 function writeRows(rows, sheetNameInput) {
   var props = PropertiesService.getScriptProperties();
