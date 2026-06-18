@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MoneyKimKim</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #eee; }
+    iframe { border: 0; width: 100%; height: 100vh; display: block; }
+  </style>
+</head>
+<body>
+  <iframe id="appFrame" src="./index-v970.html?v=loop-ui-9-9-0-base"></iframe>
+  <script>
+    const frame = document.getElementById('appFrame');
+
+    function patchApp() {
+      const w = frame.contentWindow;
+      const d = frame.contentDocument;
+      if (!w || !d) return;
+
+      injectStyle(d);
+      patchHistorySwitch(d);
+      patchSearchPlan(d);
+      patchColleagueSettings(d);
+      patchReportCards(w, d);
+    }
+
+    function injectStyle(d) {
+      if (d.getElementById('mk990-style')) return;
+      const style = d.createElement('style');
+      style.id = 'mk990-style';
+      style.textContent = `
+        .mk-details { background:#fff; border:1px solid #ddd; border-radius:14px; padding:16px; margin-bottom:18px; }
+        .mk-details > summary { cursor:pointer; font-size:20px; font-weight:900; list-style:none; }
+        .mk-details > summary::-webkit-details-marker { display:none; }
+        .mk-details > summary::after { content:'展開'; float:right; font-size:13px; color:#64748b; background:#f1f5f9; padding:4px 9px; border-radius:999px; }
+        .mk-details[open] > summary::after { content:'收起'; }
+        .mk-report-actions { display:flex; gap:10px; flex-wrap:wrap; margin:12px 0 14px; }
+        .mk-report-list { display:grid; gap:12px; }
+        .mk-report-card { background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:14px; box-shadow:0 1px 2px rgba(15,23,42,.04); }
+        .mk-report-card-title { font-size:16px; font-weight:900; line-height:1.55; margin-bottom:8px; color:#0f172a; }
+        .mk-report-meta { color:#475569; font-size:14px; line-height:1.7; margin-bottom:10px; }
+        .mk-report-url { font-size:13px; color:#2563eb; word-break:break-all; margin-bottom:10px; }
+        .mk-copy-one { background:#2563eb !important; color:#fff !important; }
+        .mk-copy-all { background:#111827 !important; color:#fff !important; }
+        .mk-teach { margin-top:14px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:14px; line-height:1.75; color:#334155; }
+        .mk-teach h3 { margin:0 0 8px; font-size:17px; color:#0f172a; }
+        .mk-teach ol { margin:8px 0 0 20px; padding:0; }
+        .mk-teach code { background:#e2e8f0; padding:2px 5px; border-radius:5px; }
+      `;
+      d.head.appendChild(style);
+    }
+
+    function patchHistorySwitch(d) {
+      const enable = d.getElementById('enableHistory');
+      if (!enable) return;
+      const ids = ['historyYears', 'historyThreshold', 'historyWindowDays'];
+      function sync() {
+        const show = enable.value === 'true';
+        ids.forEach(id => {
+          const el = d.getElementById(id);
+          const field = el && el.closest('.field');
+          if (field) field.style.display = show ? '' : 'none';
+        });
+      }
+      if (!enable.dataset.mk990) {
+        enable.dataset.mk990 = '1';
+        enable.addEventListener('change', sync);
+      }
+      sync();
+    }
+
+    function patchSearchPlan(d) {
+      const plan = d.getElementById('plan');
+      const oldPanel = plan && plan.closest('section');
+      if (!oldPanel || oldPanel.dataset.mk990Details) return;
+      const details = d.createElement('details');
+      details.className = 'mk-details';
+      details.innerHTML = '<summary>目前搜尋方式</summary>';
+      details.appendChild(plan);
+      oldPanel.replaceWith(details);
+      oldPanel.dataset.mk990Details = '1';
+    }
+
+    function patchColleagueSettings(d) {
+      const section = Array.from(d.querySelectorAll('section.panel')).find(sec => (sec.textContent || '').includes('同事設定'));
+      if (!section || section.dataset.mk990Wrapped) return;
+      const details = d.createElement('details');
+      details.className = 'mk-details';
+      const summary = d.createElement('summary');
+      summary.textContent = '同事設定與 GS 教學';
+      details.appendChild(summary);
+      section.parentNode.insertBefore(details, section);
+      details.appendChild(section);
+      section.style.border = '0';
+      section.style.padding = '14px 0 0';
+      section.style.margin = '0';
+      section.dataset.mk990Wrapped = '1';
+
+      const teach = d.createElement('div');
+      teach.className = 'mk-teach';
+      teach.innerHTML = `
+        <h3>同事要改成自己的 Google Sheet，照這樣做</h3>
+        <ol>
+          <li>複製一份自己的 Google Sheet，保留原本欄位。</li>
+          <li>打開 Apps Script，貼上目前後端程式：<code>Code-v900.gs</code> + 最新標案名稱修正版 <code>Code-v910-view-title-addon.gs</code>。</li>
+          <li>在 Apps Script 的「專案設定」→「指令碼屬性」新增 <code>SHEET_ID</code>，值填自己的試算表 ID。</li>
+          <li>需要群組通知時，再新增 <code>GOOGLE_CHAT_WEBHOOK_URL</code>；不需要可以不填。</li>
+          <li>部署 → 管理部署作業 → 編輯 → 新版本 → 類型選「網頁應用程式」。</li>
+          <li>執行身分選「我」，存取權選「知道連結的任何人」。</li>
+          <li>部署完成後，複製結尾是 <code>/exec</code> 的 GAS Web App URL。</li>
+          <li>把 URL 貼到上方「GAS Web App URL」，按「儲存自訂 GAS URL」。</li>
+          <li>按「測試連線」，看到後端版本就代表成功。</li>
+        </ol>
+      `;
+      details.appendChild(teach);
+    }
+
+    async function shortUrl(url) {
+      if (!url) return '';
+      try {
+        const r = await fetch('https://tinyurl.com/api-create.php?url=' + encodeURIComponent(url));
+        const s = (await r.text()).trim();
+        if (/^https?:\/\//.test(s)) return s;
+      } catch (e) {}
+      return url;
+    }
+
+    function rows(w) {
+      try {
+        if (typeof w.list === 'function') return w.list().filter(t => t.selected !== false);
+      } catch (e) {}
+      return (w.tenders || []).filter(t => t.selected !== false);
+    }
+
+    function titleOf(w, t) {
+      try {
+        if (typeof w.titleOf === 'function') return w.titleOf(t).title || '';
+      } catch (e) {}
+      return t.title || t.fullTitle || '';
+    }
+
+    function lineOf(w, t, url) {
+      return [titleOf(w, t), t.agency || '', '截標：' + (t.deadline || '未填'), url || t.link || ''].filter(Boolean).join('｜');
+    }
+
+    function patchReportCards(w, d) {
+      const reportBox = d.getElementById('report');
+      const section = reportBox && reportBox.closest('section');
+      if (!section) return;
+
+      const h2 = section.querySelector('h2');
+      if (h2) h2.textContent = '群組回報文字';
+
+      let host = d.getElementById('mk-report-host');
+      if (!host) {
+        section.querySelectorAll('.actions, #report').forEach(el => el.style.display = 'none');
+        host = d.createElement('div');
+        host.id = 'mk-report-host';
+        section.appendChild(host);
+      }
+
+      async function buildCards(doShort) {
+        const data = rows(w);
+        if (!data.length) {
+          host.innerHTML = '<p class="muted">尚未產生。搜尋後會在這裡顯示可複製的標案卡片。</p>';
+          return;
+        }
+        host.innerHTML = '<p class="muted">短網址產生中...</p>';
+        const items = [];
+        for (const t of data) {
+          const u = doShort ? await shortUrl(t.link || '') : (t.link || '');
+          items.push({ t, u, text: lineOf(w, t, u) });
+        }
+        host.innerHTML = `
+          <div class="mk-report-actions">
+            <button class="mk-copy-all" type="button">複製全部</button>
+          </div>
+          <div class="mk-report-list"></div>
+        `;
+        const list = host.querySelector('.mk-report-list');
+        items.forEach((item, i) => {
+          const card = d.createElement('div');
+          card.className = 'mk-report-card';
+          card.innerHTML = `
+            <div class="mk-report-card-title">${escapeHtml(titleOf(w, item.t))}</div>
+            <div class="mk-report-meta">${escapeHtml(item.t.agency || '')}｜截標：${escapeHtml(item.t.deadline || '未填')}</div>
+            <div class="mk-report-url">${escapeHtml(item.u || '')}</div>
+            <button class="mk-copy-one" type="button">複製這一筆</button>
+          `;
+          card.querySelector('button').onclick = async () => {
+            await navigator.clipboard.writeText(item.text);
+            card.querySelector('button').textContent = '已複製';
+            setTimeout(() => card.querySelector('button').textContent = '複製這一筆', 1000);
+          };
+          list.appendChild(card);
+        });
+        host.querySelector('.mk-copy-all').onclick = async () => {
+          await navigator.clipboard.writeText(items.map(x => x.text).join('\n'));
+          host.querySelector('.mk-copy-all').textContent = '已複製全部';
+          setTimeout(() => host.querySelector('.mk-copy-all').textContent = '複製全部', 1000);
+        };
+      }
+
+      w.report = function () { return '回報文字請使用下方卡片複製。'; };
+      w.refreshReportShort = () => buildCards(true);
+      w.copyReport = () => buildCards(true);
+
+      const data = rows(w);
+      if (data.length) buildCards(false);
+      else host.innerHTML = '<p class="muted">尚未產生。搜尋後會在這裡顯示可複製的標案卡片。</p>';
+    }
+
+    function escapeHtml(s) {
+      return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+    }
+
+    frame.addEventListener('load', () => {
+      patchApp();
+      setInterval(patchApp, 1200);
+    });
+  </script>
+</body>
+</html>
