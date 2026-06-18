@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MoneyKimKim</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #eee; }
+    iframe { border: 0; width: 100%; height: 100vh; display: block; }
+  </style>
+</head>
+<body>
+  <iframe id="appFrame" src="./index-v970.html?v=loop-ui-9-8-0-base"></iframe>
+  <script>
+    const frame = document.getElementById('appFrame');
+
+    function patchApp() {
+      const w = frame.contentWindow;
+      const d = frame.contentDocument;
+      if (!w || !d) return;
+
+      // 1. 往年比對：只顯示開關；開啟後才顯示比對年數、門檻、天數。
+      const enable = d.getElementById('enableHistory');
+      const ids = ['historyYears', 'historyThreshold', 'historyWindowDays'];
+      function syncHistoryFields() {
+        const show = enable && enable.value === 'true';
+        ids.forEach((id) => {
+          const el = d.getElementById(id);
+          const field = el && el.closest('.field');
+          if (field) field.style.display = show ? '' : 'none';
+        });
+      }
+      if (enable && !enable.dataset.mkPatched) {
+        enable.dataset.mkPatched = '1';
+        enable.addEventListener('change', syncHistoryFields);
+      }
+      syncHistoryFields();
+
+      // 2. 目前搜尋方式：維持 details 收合，預設收起。
+      const details = Array.from(d.querySelectorAll('details')).find((el) => (el.textContent || '').includes('目前搜尋方式'));
+      if (details) details.open = false;
+
+      // 3. 群組回報區：文字基本版，按下才產生短網址，不先跳長篇內容。
+      const reportBox = d.getElementById('report');
+      const reportSection = reportBox && reportBox.closest('section');
+      if (reportSection) {
+        const h2 = reportSection.querySelector('h2');
+        if (h2) h2.textContent = '群組回報文字';
+        const buttons = reportSection.querySelectorAll('button');
+        if (buttons[0]) buttons[0].textContent = '產生並複製回報文字';
+        if (buttons[1]) buttons[1].style.display = 'none';
+        if (reportBox && (!reportBox.textContent || reportBox.textContent === '尚未產生。' || reportBox.textContent === '[object Promise]')) {
+          reportBox.textContent = '點擊「產生並複製回報文字」後，才會產生短網址版回報。';
+        }
+      }
+
+      async function shortUrl(url) {
+        if (!url) return '';
+        try {
+          const r = await fetch('https://tinyurl.com/api-create.php?url=' + encodeURIComponent(url));
+          const s = (await r.text()).trim();
+          if (/^https?:\/\//.test(s)) return s;
+        } catch (e) {}
+        return url;
+      }
+
+      function getRows() {
+        try {
+          if (typeof w.list === 'function') return w.list().filter((t) => t.selected !== false);
+        } catch (e) {}
+        return (w.tenders || []).filter((t) => t.selected !== false);
+      }
+
+      function getTitle(t) {
+        try {
+          if (typeof w.titleOf === 'function') return w.titleOf(t).title || '';
+        } catch (e) {}
+        return t.title || t.fullTitle || '';
+      }
+
+      // render() 裡會呼叫 report(l,false)，所以這裡改成同步基本版，避免 [object Promise]。
+      w.report = function (rows) {
+        rows = rows || getRows();
+        if (!rows.length) return '尚未產生。';
+        return rows.map((t) => [
+          getTitle(t),
+          t.agency || '',
+          '截標：' + (t.deadline || '未填'),
+          t.link || ''
+        ].filter(Boolean).join('｜')).join('\n');
+      };
+
+      w.refreshReportShort = async function () {
+        const rows = getRows();
+        if (!reportBox) return;
+        if (!rows.length) {
+          reportBox.textContent = '尚未產生。';
+          return;
+        }
+        reportBox.textContent = '短網址產生中...';
+        const lines = [];
+        for (const t of rows) {
+          const u = await shortUrl(t.link || '');
+          lines.push([
+            getTitle(t),
+            t.agency || '',
+            '截標：' + (t.deadline || '未填'),
+            u
+          ].filter(Boolean).join('｜'));
+        }
+        reportBox.textContent = lines.join('\n');
+      };
+
+      w.copyReport = async function () {
+        await w.refreshReportShort();
+        if (reportBox) await navigator.clipboard.writeText(reportBox.textContent);
+        const btn = reportSection && reportSection.querySelector('button');
+        if (btn) {
+          const old = btn.textContent;
+          btn.textContent = '已複製';
+          setTimeout(() => btn.textContent = old, 1200);
+        }
+      };
+    }
+
+    frame.addEventListener('load', () => {
+      patchApp();
+      setInterval(patchApp, 1000);
+    });
+  </script>
+</body>
+</html>
